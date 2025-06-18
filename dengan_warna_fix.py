@@ -1,121 +1,161 @@
 import tkinter as tk
 import math
-import time
 
-class SolidBlockMixedAxes:
-    def __init__(self, master, width=200, height=100, depth=150):
+class Solid3DBox:
+    def __init__(self, master):
+        # inisialisasi window dan canvas putih dengan ukuran 800x600
         self.master = master
-        self.canvas = tk.Canvas(master, width=600, height=600, bg='white')
+        self.canvas = tk.Canvas(master, width=800, height=600, bg="white")
         self.canvas.pack()
-
-        # half-sizes
-        w2, h2, d2 = width/2, height/2, depth/2
-        self.axis_length = max(width, height, depth) * 1.2
-
-        # block vertices
+        
+        # sudut rotasi awal: miring sedikit dari atas dan kanan
+        self.rot_x = -4.9
+        self.rot_y = 2.9
+        self.rot_z = 0
+        
+        # dimensi balok (lebar, tinggi, kedalaman)
+        width, height, depth = 180, 140, 120
+        
+        # titik-titik sudut balok (8 vertices)
+        # tiap titik: [x, y, z]
         self.vertices = [
-            [-w2, -h2, -d2],
-            [ w2, -h2, -d2],
-            [ w2,  h2, -d2],
-            [-w2,  h2, -d2],
-            [-w2, -h2,  d2],
-            [ w2, -h2,  d2],
-            [ w2,  h2,  d2],
-            [-w2,  h2,  d2],
+            [-width/2, -height/2, -depth/2],  # belakang kiri bawah
+            [ width/2, -height/2, -depth/2],  # belakang kanan bawah
+            [ width/2,  height/2, -depth/2],  # belakang kanan atas
+            [-width/2,  height/2, -depth/2],  # belakang kiri atas
+            [-width/2, -height/2,  depth/2],  # depan kiri bawah
+            [ width/2, -height/2,  depth/2],  # depan kanan bawah
+            [ width/2,  height/2,  depth/2],  # depan kanan atas
+            [-width/2,  height/2,  depth/2],  # depan kiri atas
         ]
-        # edges (for optional outline)
+        
+        # daftar pasangan indeks untuk menggambar garis antar vertices
         self.edges = [
-            (0,1),(1,2),(2,3),(3,0),
-            (4,5),(5,6),(6,7),(7,4),
-            (0,4),(1,5),(2,6),(3,7),
+            (0, 1), (1, 2), (2, 3), (3, 0),  # sisi belakang
+            (4, 5), (5, 6), (6, 7), (7, 4),  # sisi depan
+            (0, 4), (1, 5), (2, 6), (3, 7),  # garis penghubung depan-belakang
         ]
-        # faces for solid fill
+        
+        # daftar face (4 vertices) untuk menyembunyikan garis yang tidak terlihat
+        # urutan counterclockwise agar normal menghadap keluar
         self.faces = [
-            (0,1,2,3),  # back
-            (4,5,6,7),  # front
-            (0,1,5,4),  # bottom
-            (2,3,7,6),  # top
-            (1,2,6,5),  # right
-            (0,3,7,4),  # left
+            [0, 3, 2, 1],  # belakang
+            [4, 5, 6, 7],  # depan  
+            [0, 4, 7, 3],  # kiri
+            [1, 2, 6, 5],  # kanan
+            [3, 7, 6, 2],  # atas
+            [0, 1, 5, 4],  # bawah
         ]
-        # unique colors per face
-        self.colors = ['red', 'green', 'blue', 'yellow', 'cyan', 'magenta']
+        
+        # hubungkan tombol keyboard ke fungsi on_key_press
+        self.master.bind("<KeyPress>", self.on_key_press)
+        
+        # mulai dengan menggambar sekali
+        self.render()
+        
+        # agar canvas bisa menerima input keyboard
+        self.canvas.focus_set()
+    
+    def multiply_matrix(self, point, rot_x, rot_y, rot_z):
+        # rotasi titik 3D sesuai sudut X, Y, Z
+        x, y, z = point
+        
+        # rotasi sekitar sumbu X (pitch)
+        cos_x, sin_x = math.cos(rot_x), math.sin(rot_x)
+        y1 = y * cos_x - z * sin_x
+        z1 = y * sin_x + z * cos_x
+        
+        # rotasi sekitar sumbu Y (yaw)
+        cos_y, sin_y = math.cos(rot_y), math.sin(rot_y)
+        x2 = x * cos_y + z1 * sin_y
+        z2 = -x * sin_y + z1 * cos_y
+        
+        # rotasi sekitar sumbu Z (roll)
+        cos_z, sin_z = math.cos(rot_z), math.sin(rot_z)
+        x3 = x2 * cos_z - y1 * sin_z
+        y3 = x2 * sin_z + y1 * cos_z
+        
+        return [x3, y3, z2]
+    
+    def project_3d(self, point):
+        # proyeksi ortografis sederhana: geser ke tengah canvas
+        x = point[0] + 400  # lebar/2
+        y = -point[1] + 300 # tinggi/2, dibalik agar positif ke atas
+        return [x, y]
+    
+    def calculate_normal(self, face, verts):
+        # hitung normal face via cross product vektor (v1->v2) x (v1->v3)
+        v1 = verts[face[0]]
+        v2 = verts[face[1]]
+        v3 = verts[face[2]]
+        
+        vec1 = [v2[i] - v1[i] for i in range(3)]
+        vec2 = [v3[i] - v1[i] for i in range(3)]
+        
+        normal = [
+            vec1[1]*vec2[2] - vec1[2]*vec2[1],
+            vec1[2]*vec2[0] - vec1[0]*vec2[2],
+            vec1[0]*vec2[1] - vec1[1]*vec2[0]
+        ]
+        return normal
+    
+    def is_face_visible(self, face, verts):
+        # hanya gambar face yang normal-nya menghadap kamera (z>0)
+        normal = self.calculate_normal(face, verts)
+        return normal[2] > 0
+    
+    def is_edge_visible(self, edge, visible_faces):
+        # edge terlihat jika merupakan sisi salah satu face yang terlihat
+        for fi in visible_faces:
+            face = self.faces[fi]
+            # pastikan kedua titik edge ada di face ini dan berdekatan
+            for i in range(len(face)):
+                j = (i + 1) % len(face)
+                if (edge[0] == face[i] and edge[1] == face[j]) or \
+                   (edge[1] == face[i] and edge[0] == face[j]):
+                    return True
+        return False
+    
+    def render(self):
+        # bersihkan canvas
+        self.canvas.delete("all")
+        
+        # transform semua vertices
+        tverts = [self.multiply_matrix(v, self.rot_x, self.rot_y, self.rot_z)
+                  for v in self.vertices]
+        # proyeksikan ke 2D
+        pverts = [self.project_3d(v) for v in tverts]
+        
+        # cari face yang terlihat
+        visible = [i for i,f in enumerate(self.faces)
+                   if self.is_face_visible(f, tverts)]
+        
+        # gambar hanya edge yang termasuk di face terlihat
+        for edge in self.edges:
+            if self.is_edge_visible(edge, visible):
+                p1 = pverts[edge[0]]
+                p2 = pverts[edge[1]]
+                self.canvas.create_line(p1[0], p1[1], p2[0], p2[1], width=2)
+    
+    def on_key_press(self, event):
+        # ubah sudut rotasi sesuai tombol
+        step = 0.1
+        k = event.keysym.lower()
+        
+        if k == 'a':        # putar kiri/kanan
+            self.rot_y -= step
+        elif k == 'd':
+            self.rot_y += step
+        elif k == 'w':      # putar atas/bawah
+            self.rot_x += step
+        elif k == 's':
+            self.rot_x -= step
+        
+        # render ulang setelah perubahan sudut
+        self.render()
 
-        # rotation state
-        self.vx = 0.0   # W/S → pitch around X
-        self.vz = 0.0   # A/D → roll around Z
-        self.ang_x = 0.0
-        self.ang_z = math.radians(20)  # initial tilt
-
-        master.bind('<KeyPress>',  self.on_keypress)
-        master.bind('<KeyRelease>', self.on_keyrelease)
-
-        self.last_time = time.time()
-        self.animate()
-
-    def project(self, x, y, z):
-        cx, cy = 300, 300
-        return cx + x, cy - z
-
-    def rotate(self, x, y, z):
-        # rotate about X
-        cx, sx = math.cos(self.ang_x), math.sin(self.ang_x)
-        y, z = y*cx - z*sx, y*sx + z*cx
-        # rotate about Z
-        cz, sz = math.cos(self.ang_z), math.sin(self.ang_z)
-        x, y = x*cz - y*sz, x*sz + y*cz
-        return x, y, z
-
-    def on_keypress(self, e):
-        sp = 0.03
-        if e.keysym == 'w':   self.vx =  sp
-        elif e.keysym == 's': self.vx = -sp
-        elif e.keysym == 'a': self.vz =  sp
-        elif e.keysym == 'd': self.vz = -sp
-
-    def on_keyrelease(self, e):
-        if e.keysym in ('w','s'): self.vx = 0
-        if e.keysym in ('a','d'): self.vz = 0
-
-    def animate(self):
-        now = time.time()
-        dt = now - self.last_time
-        self.last_time = now
-
-        # update rotation angles
-        self.ang_x += self.vx * dt * 30
-        self.ang_z += self.vz * dt * 30
-
-        # clear canvas
-        self.canvas.delete('all')
-
-        # transform all vertices
-        transformed = [self.rotate(x, y, z) for x, y, z in self.vertices]
-
-        # depth-sort faces by average Y (camera looks along +Y)
-        order = []
-        for idx, face in enumerate(self.faces):
-            avg_y = sum(transformed[i][1] for i in face) / 4.0
-            order.append((avg_y, idx))
-        order.sort()
-
-        # draw faces (solid)
-        for _, idx in order:
-            pts2d = [self.project(*transformed[i]) for i in self.faces[idx]]
-            coords = [c for p in pts2d for c in p]
-            self.canvas.create_polygon(coords, fill=self.colors[idx], outline='black')
-
-        # draw edges on top
-        for i, j in self.edges:
-            x1, y1 = self.project(*transformed[i])
-            x2, y2 = self.project(*transformed[j])
-            self.canvas.create_line(x1, y1, x2, y2, fill='black', width=1)
-
-        # schedule next frame
-        self.master.after(33, self.animate)
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     root = tk.Tk()
-    root.title("Menggunakan Warna Setiap Sisi Baloknya")
-    SolidBlockMixedAxes(root, width=250, height=120, depth=180)
+    root.title("Tertutup")
+    app = Solid3DBox(root)
     root.mainloop()

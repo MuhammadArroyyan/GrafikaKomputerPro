@@ -1,109 +1,114 @@
-# wireframe_block_mixed_axes.py
-
 import tkinter as tk
 import math
-import time
 
-class WireframeBlockMixedAxes:
-    def __init__(self, master, width=200, height=100, depth=150):
+class Wireframe3DBox:
+    def __init__(self, master):
         self.master = master
-        self.canvas = tk.Canvas(master, width=600, height=600, bg='white')
+        self.canvas = tk.Canvas(master, width=600, height=600, bg="white")
         self.canvas.pack()
 
-        # half-sizes
-        w2, h2, d2 = width/2, height/2, depth/2
-        # panjang sumbu di model-space
-        self.axis_length = max(width, height, depth) * 1.2
+        # Sudut rotasi awal
+        self.rot_x = -4.9
+        self.rot_y = 2.9
 
-        # block vertices
+        # Dimensi balok
+        width = 200
+        height = 160
+        depth = 120
+
+        # Vertices balok (8 titik sudut)
         self.vertices = [
-            [-w2, -h2, -d2],
-            [ w2, -h2, -d2],
-            [ w2,  h2, -d2],
-            [-w2,  h2, -d2],
-            [-w2, -h2,  d2],
-            [ w2, -h2,  d2],
-            [ w2,  h2,  d2],
-            [-w2,  h2,  d2],
+            [-width/2, -height/2, -depth/2],  # 0: belakang kiri bawah
+            [width/2, -height/2, -depth/2],   # 1: belakang kanan bawah
+            [width/2, height/2, -depth/2],    # 2: belakang kanan atas
+            [-width/2, height/2, -depth/2],   # 3: belakang kiri atas
+            [-width/2, -height/2, depth/2],   # 4: depan kiri bawah
+            [width/2, -height/2, depth/2],    # 5: depan kanan bawah
+            [width/2, height/2, depth/2],     # 6: depan kanan atas
+            [-width/2, height/2, depth/2]     # 7: depan kiri atas
         ]
+        
+        # Edges (garis-garis yang menghubungkan vertices)
         self.edges = [
-            (0,1),(1,2),(2,3),(3,0),
-            (4,5),(5,6),(6,7),(7,4),
-            (0,4),(1,5),(2,6),(3,7),
+            # Sisi belakang
+            [0, 1], [1, 2], [2, 3], [3, 0],
+            # Sisi depan
+            [4, 5], [5, 6], [6, 7], [7, 4],
+            # Sisi penghubung depan-belakang
+            [0, 4], [1, 5], [2, 6], [3, 7]
+        ]
+       
+        # Faces untuk hidden surface removal (tidak digunakan dalam wireframe)
+        self.faces = [
+            [0, 3, 2, 1],  # belakang
+            [4, 5, 6, 7],  # depan  
+            [0, 4, 7, 3],  # kiri
+            [1, 2, 6, 5],  # kanan
+            [3, 7, 6, 2],  # atas
+            [0, 1, 5, 4]   # bawah
         ]
 
-        # rotation state
-        self.vx = 0.0   # W/S → pitch (sumbu X)
-        self.vz = 0.0   # A/D → roll  (sumbu Z)
-        self.ang_x = 0.0
-        self.ang_z = math.radians(20)  # initial tilt
+        # Kontrol keyboard
+        self.master.bind("<KeyPress>", self.on_key)
 
-        master.bind('<KeyPress>',  self.on_keypress)
-        master.bind('<KeyRelease>', self.on_keyrelease)
+        # Focus the canvas for keyboard input
+        self.canvas.focus_set()
 
-        self.last_time = time.time()
-        self.animate()
+        # Render pertama
+        self.render()
 
-    def project(self, x, y, z):
-        """Orthographic projection + center at (300,300)."""
-        return 300 + x, 300 - z
+    def multiply_matrix(self, point, rot_x, rot_y):
+        x, y, z = point
 
-    def rotate(self, x, y, z):
-        """Rotate point around X then Z."""
-        # about X
-        cx, sx = math.cos(self.ang_x), math.sin(self.ang_x)
-        y, z = y*cx - z*sx, y*sx + z*cx
-        # about Z
-        cz, sz = math.cos(self.ang_z), math.sin(self.ang_z)
-        x, y = x*cz - y*sz, x*sz + y*cz
-        return x, y, z
+        # Rotasi X
+        cos_x = math.cos(rot_x)
+        sin_x = math.sin(rot_x)
+        y1 = y * cos_x - z * sin_x
+        z1 = y * sin_x + z * cos_x
 
-    def on_keypress(self, e):
-        sp = 0.03
-        if e.keysym == 'w':   self.vx =  sp
-        elif e.keysym == 's': self.vx = -sp
-        elif e.keysym == 'a': self.vz =  sp
-        elif e.keysym == 'd': self.vz = -sp
+        # Rotasi Y
+        cos_y = math.cos(rot_y)
+        sin_y = math.sin(rot_y)
+        x2 = x * cos_y + z1 * sin_y
+        z2 = -x * sin_y + z1 * cos_y
 
-    def on_keyrelease(self, e):
-        if e.keysym in ('w','s'): self.vx = 0
-        if e.keysym in ('a','d'): self.vz = 0
+        return [x2, y1, z2]
 
-    def animate(self):
-        now = time.time()
-        dt = now - self.last_time
-        self.last_time = now
+    def project_3d(self, point):
+        x, y = point[0], point[1]
+        return x + 300, -y + 300  
 
-        # update angles
-        self.ang_x += self.vx * dt * 30
-        self.ang_z += self.vz * dt * 30
+    def draw_line(self, p1, p2):
+        self.canvas.create_line(p1[0], p1[1], p2[0], p2[1], fill="black", width=2)
 
-        self.canvas.delete('all')
+    def render(self):
+        self.canvas.delete("all")
 
-        # origin in screen coords
-        ox, oy = self.project(0,0,0)
+        transformed = [self.multiply_matrix(v, self.rot_x, self.rot_y) for v in self.vertices]
+        projected = [self.project_3d(p) for p in transformed]
 
-        # 1) draw static Z-axis (blue, vertical up)
-        zx, zy = ox, oy - self.axis_length
-        self.canvas.create_line(ox, oy, zx, zy, fill='blue', width=2, arrow=tk.LAST)
+        for edge in self.edges:
+            p1 = projected[edge[0]]
+            p2 = projected[edge[1]]
+            self.draw_line(p1, p2)
 
-        # 2) draw rotating X-axis (red)
-        x_end = self.rotate(self.axis_length, 0, 0)
-        xx, xy = self.project(*x_end)
-        self.canvas.create_line(ox, oy, xx, xy, fill='red', width=2, arrow=tk.LAST)
+    def on_key(self, event):
+        step = 0.1
+        key = event.keysym.lower()
 
-        # 3) draw the block
-        pts = [ self.project(*self.rotate(x,y,z)) for x,y,z in self.vertices ]
-        for i,j in self.edges:
-            x1,y1 = pts[i]
-            x2,y2 = pts[j]
-            self.canvas.create_line(x1,y1, x2,y2, fill='black', width=2)
+        if key == 'a':
+            self.rot_y -= step
+        elif key == 'd':
+            self.rot_y += step
+        elif key == 'w':
+            self.rot_x += step
+        elif key == 's':
+            self.rot_x -= step
 
-        # schedule next frame
-        self.master.after(33, self.animate)
+        self.render()
 
 if __name__ == '__main__':
     root = tk.Tk()
-    root.title("Wireframe Block + Mixed Axes")
-    WireframeBlockMixedAxes(root, width=250, height=120, depth=180)
+    root.title("Wireframe")
+    app = Wireframe3DBox(root)
     root.mainloop()
